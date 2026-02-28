@@ -1,4 +1,4 @@
-NAME,total_housing_units,built_2020_or_later,built_2010_to_2019,built_2000_to_2009,built_1990_to_1999,built_1980_to_1989,built_1970_to_1979,built_1960_to_1969,built_1950_to_1959,built_1940_to_1949,median_year_year_built,state,county
+NAME,total_housing_units,built_2020_or_later,built_2010_to_2019,built_2000_to_2009,built_1990_to_1999,built_1980_to_1989,built_1970_to_1979,built_1960_to_1969,built_1950_to_1959,built_1940_to_1949,MEDIAN_YEAR_BUILT,state,county
 "Autauga County, Alabama",24731,388,3320,5374,4667,2665,4388,2036,929,348,1993,01,001
 "Baldwin County, Alabama",128518,3762,20664,33844,27275,18434,11094,6516,2796,1577,1998,01,003
 "Barbour County, Alabama",11702,137,507,1144,2365,2203,1770,1349,971,417,1982,01,005
