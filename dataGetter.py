@@ -18,11 +18,12 @@ class DataGetter:
     raw_out_dir : str
             Output directory for raw CSV files
     """
-    def __init__(self, raw_out_dir = "./rawData", CENSUS_KEY = None, year = 2023, download = True):
+    def __init__(self, raw_out_dir = "./rawData", CENSUS_KEY = None, year = 2023, download = True, roni_raw_data_path = "./RONI_data/rawData.csv"):
         self.directory = raw_out_dir
         self.api_key = CENSUS_KEY
         self.year = year
         self.download = download
+        self.roni_raw_data_path = roni_raw_data_path
 
         if self.download:
             # append year to directory name for organization
@@ -193,14 +194,14 @@ class DataGetter:
         
         return df
 
-    def RONI_csv(self, rawData = "./RONI_data/rawData"):
+    def RONI_csv(self):
 
         # check for raw data file existence and if it does not exist, raise an error
-        if not os.path.exists(rawData):
+        if not os.path.exists(self.roni_raw_data_path):
             raise FileNotFoundError("RONI raw data file not found")
 
         # read in the csv file
-        df = pd.read_csv(rawData)
+        df = pd.read_csv(self.roni_raw_data_path)
 
         # remove rows in yea column with the value "Year"
         df = df[df['Year'] != 'Year']
@@ -440,18 +441,19 @@ class DataGetter:
             self.check_file_existence(output_file)
         return df
 
-    def fetch_all(self, roni_raw_data_path = "./RONI_data/rawData.csv"):
+    def fetch_all(self):
         """
         Run all data getter functions to download and save all datasets.
         """
 
+        # run class attributes ending with _csv to fetch all datasets
         if self.check_api_key():
             population_df = self.Population_csv()
             median_income_df = self.MedianIncome_csv()
             house_age_df = self.HouseAge_csv()
-            roni_df = self.RONI_csv(roni_raw_data_path)
-            # storm_damage_df = self.stormDamage_csv()
-            # temp_anomaly_df = self.tempAnomaly_csv()
+            roni_df = self.RONI_csv()
+            storm_damage_df = self.stormDamage_csv()
+            temp_anomaly_df = self.tempAnomaly_csv()
             coastal_type_df = self.coastalType_csv()
 
             return {
@@ -459,7 +461,7 @@ class DataGetter:
                 "median_income": median_income_df,
                 "house_age": house_age_df,
                 "roni": roni_df,
-                # "storm_damage": storm_damage_df,
-                # "temp_anomaly": temp_anomaly_df,
+                "storm_damage": storm_damage_df,
+                "temp_anomaly": temp_anomaly_df,
                 "coastal_type": coastal_type_df
             }
