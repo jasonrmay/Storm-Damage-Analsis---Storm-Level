@@ -11,25 +11,23 @@ class DataGetter:
 
     Parameters
     ----------
-    year : int
-            ACS 5-year end year (e.g., 2019, 2020, 2021, 2022)
-    api_key : str
-            Census API key
-    raw_out_dir : str
-            Output directory for raw CSV files
+    
     """
-    def __init__(self, raw_out_dir = "./rawData", CENSUS_KEY = None, year = 2023, download = True, roni_raw_data_path = "./RONI_data/rawData.csv"):
+    def __init__(self, raw_out_dir = "./rawData", CENSUS_KEY = None, year = 2023, download = True,
+                  roni_raw_data_path = ".\static_data\Coastal_data_2010\coastal_counties_2010.csv",
+                  coastal_type_raw_data_path = ".\static_data\Coastal_data_2010\coastal_type_data_2010.csv"):
         self.directory = raw_out_dir
         self.api_key = CENSUS_KEY
         self.year = year
         self.download = download
         self.roni_raw_data_path = roni_raw_data_path
+        self.coastal_type_raw_data_path = coastal_type_raw_data_path
 
         if self.download:
             # append year to directory name for organization
             self.directory = os.path.join(self.directory, str(self.year))
+            # check for the provided directory and create it if it doesn't exist, or clear it if it does.
             self.check_directory()
-            print(self.directory)
 
     def check_api_key(self):
         """Check for Census API key and warn if not provided, allowing user to choose whether to continue without it."""
@@ -37,7 +35,7 @@ class DataGetter:
             print("Warning: No Census API key provided. Please set the CENSUS_KEY environment variable and pass it to the DataGetter constructor for faster data downloads.")
             print("Refer to the README for instructions on how to obtain and set your Census API key.")
             print("Do you want to continue without an API key? (y/n)")
-            choice = input().lower()
+            choice = input().lower().strip()
             if choice != 'y':
                 print("Exiting.")
                 return False
@@ -81,14 +79,6 @@ class DataGetter:
                 "B01003_001E": "population"
         }, inplace=True)
 
-        if self.download:
-            output_file = f"{self.directory}/county_population_{self.year}.csv"
-            df.to_csv(output_file, index=False)
-
-            # check for download success by verifying file existence
-            if not os.path.exists(output_file):
-                raise FileNotFoundError("Population CSV file not found after download")
- 
         return df
     
     def MedianIncome_csv(self):
@@ -118,13 +108,6 @@ class DataGetter:
 
         df.rename(columns={"B19013_001E": "MedianIncome"}, inplace=True)
 
-        if self.download:
-            output_file = f"{self.directory}/county_median_household_income_{self.year}.csv"
-            df.to_csv(output_file, index=False)
-
-            # check for download success by verifying file existence
-            self.check_file_existence(output_file)
-  
         return df
     
     def HouseAge_csv(self):
@@ -184,13 +167,6 @@ class DataGetter:
             "B25034_010E": "built_1940_to_1949",
             "B25035_001E": "MEDIAN_YEAR_BUILT"
         }, inplace=True)
-
-        if self.download:
-            output_file = f"{self.directory}/county_house_age_{self.year}.csv"
-            df.to_csv(output_file, index=False)
-
-            # check for download success by verifying file existence
-            self.check_file_existence(output_file)
         
         return df
 
@@ -198,7 +174,7 @@ class DataGetter:
 
         # check for raw data file existence and if it does not exist, raise an error
         if not os.path.exists(self.roni_raw_data_path):
-            raise FileNotFoundError("RONI raw data file not found")
+            raise FileNotFoundError("The required RONI raw data file is not found")
 
         # read in the csv file
         df = pd.read_csv(self.roni_raw_data_path)
@@ -248,13 +224,8 @@ class DataGetter:
         # get the row corresponding to the given year
         df = df.loc[int(self.year)]
 
-        if self.download:
-            # write the dataframe to a csv file
-            output_file = f"{self.directory}/RONI_{self.year}.csv"
-            df.to_csv(output_file)
-
-            # check for download success by verifying file existence
-            self.check_file_existence(output_file)
+        # reset the index to get the month names back as a column
+        df = df.reset_index()
 
         return df
 
@@ -280,14 +251,6 @@ class DataGetter:
         
         # Download and read the CSV file into a df
         df = pd.read_csv(url, compression='gzip', low_memory=False)
-
-        if self.download:
-            # Save the df as a CSV file
-            output_file = f"{self.directory}/StormData_{self.year}.csv"
-            df.to_csv(output_file, index=False)
-
-            # check for download success by verifying file existence
-            self.check_file_existence(output_file)
         
         return df
 
@@ -324,13 +287,6 @@ class DataGetter:
         # Merge all monthly DataFrames into a single master DataFrame
         master_df = pd.concat(all_monthly_data, ignore_index=True)
 
-        if self.download:
-            output_file = f"{self.directory}/temperature_anomalies_{self.year}.csv"
-            master_df.to_csv(output_file, index=False)
-
-            # check for download success by verifying file existence
-            self.check_file_existence(output_file)
-
         return master_df
 
     def coastalType_csv(self):
@@ -339,106 +295,7 @@ class DataGetter:
         This is a static dataset that doesn't change by year.
         """
 
-        def arcgis_query_all(layer_query_url: str, out_fields: str):
-            """
-            Helper for shoreline and watershed counties: Query an ArcGIS layer and return ALL records, handling pagination.
-            """
-            rows = []
-            offset = 0
-            page_size = 2000  # service MaxRecordCount is 2000
-
-            while True:
-                params = {
-                    "where": "1=1",
-                    "outFields": out_fields,
-                    "returnGeometry": "false",
-                    "f": "json",
-                    "resultOffset": offset,
-                    "resultRecordCount": page_size,
-                }
-                r = requests.get(layer_query_url, params=params, timeout=120)
-                r.raise_for_status()
-                data = r.json()
-
-                # If ArcGIS returns an error, it will look like {"error": {...}}
-                if "error" in data:
-                    raise RuntimeError(f"ArcGIS error from {layer_query_url}: {data['error']}")
-
-                feats = data.get("features", [])
-                if not feats:
-                    break
-
-                for f in feats:
-                    rows.append(f.get("attributes", {}))
-
-                offset += len(feats)
-
-                # Some services also include exceededTransferLimit; we’re paginating anyway.
-                if len(feats) < page_size:
-                    break
-
-            return pd.DataFrame(rows)
-
-        def ShorelineCounties_csv():
-            """
-            Downloads shoreline counties from NOAA ArcGIS service
-            and saves it as a CSV.
-            """
-
-            
-            SHORELINE_LAYER = "https://maps1.coast.noaa.gov/arcgis/rest/services/Landcover/Coastal_County_Update_Review/MapServer/9/query"
-
-            df = arcgis_query_all(
-                SHORELINE_LAYER,
-                out_fields="fips"
-            )
-
-            df = df.rename(columns={
-                "fips": "FIPS",
-                "cntyname": "COUNTY",
-                "st_name": "STATE_NAME",
-            })
-
-            df["FIPS"] = df["FIPS"].astype(str).str.zfill(5)
-            df["COASTAL_TYPE_SHORELINE"] = "shoreline"
-
-            # only relevant columns
-            return df[["FIPS", "COASTAL_TYPE_SHORELINE"]]
-
-        def WatershedCounties_csv():
-            """
-            Downloads watershed counties from NOAA ArcGIS service
-            and saves it as a CSV.
-            """
-            
-            WATERSHED_LAYER = "https://maps1.coast.noaa.gov/arcgis/rest/services/Landcover/Coastal_County_Update_Review/MapServer/33/query"
-
-            df = arcgis_query_all(
-                WATERSHED_LAYER,
-                out_fields="fips"
-            )
-            df = df.rename(columns={
-                "fips": "FIPS",
-            })
-
-            df["FIPS"] = df["FIPS"].astype(str).str.zfill(5)
-            df["COASTAL_TYPE_WATERSHED"] = "watershed"
-
-
-            return df[["FIPS", "COASTAL_TYPE_WATERSHED"]]
-
-        shoreline_df = ShorelineCounties_csv()
-        watershed_df = WatershedCounties_csv()
-
-        # merge shoreline and watershed dataframes on FIPS code, keeping all rows (outer join)
-        df = pd.merge(shoreline_df, watershed_df, on="FIPS", how="outer", suffixes=("_SHORELINE", "_WATERSHED"))
-
-        if self.download:
-            output_file = f"{self.directory}/coastal_counties_2010.csv"
-            df.to_csv(output_file, index=False)
-
-            # check for download success by verifying file existence
-            self.check_file_existence(output_file)
+        df = pd.read_csv(self.coastal_type_raw_data_path)
         return df
 
     def fetch_all(self):
@@ -452,16 +309,23 @@ class DataGetter:
             median_income_df = self.MedianIncome_csv()
             house_age_df = self.HouseAge_csv()
             roni_df = self.RONI_csv()
-            storm_damage_df = self.stormDamage_csv()
+            storm_data_df = self.stormDamage_csv()
             temp_anomaly_df = self.tempAnomaly_csv()
             coastal_type_df = self.coastalType_csv()
 
-            return {
+        dataframes = {
                 "population": population_df,
                 "median_income": median_income_df,
                 "house_age": house_age_df,
                 "roni": roni_df,
-                "storm_damage": storm_damage_df,
+                "storm_data": storm_data_df,
                 "temp_anomaly": temp_anomaly_df,
                 "coastal_type": coastal_type_df
             }
+        
+        if self.download:
+            for name, df in dataframes.items():
+                output_file = f"{self.directory}/{name}_{self.year}.csv"
+                df.to_csv(output_file, index=False)
+                self.check_file_existence(output_file)
+        return dataframes

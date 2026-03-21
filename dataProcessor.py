@@ -1,18 +1,25 @@
 import pandas as pd
 import numpy as np
 import us
+import os
 
 class DataProcessor:
-    def __init__(self, data_dict):
+    def __init__(self, data_dict, data_path = r"./cleanedData/", download=True):
         self.data_dict = data_dict
+        self.data_path = data_path
+        self.download = download
+
+        if self.download:
+            # create the directory if it doesn't exist
+            if not os.path.exists(self.data_path):
+                os.makedirs(self.data_path)
 
     def make_fips_code(self, state_code_col, county_code_col):
         # combine state and county fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
-        return str(self.data_dict[state_code_col]).zfill(2) + str(self.data_dict[county_code_col]).zfill(3)
+        return str(state_code_col.to_list()[0]).zfill(2) + str(county_code_col.to_list()[0]).zfill(3)
 
     def clean_housing(self):
-        csv = self.data_dict["house_age"]
-        df = pd.read_csv(csv)
+        df = self.data_dict["house_age"]
 
         df['FIPS'] = self.make_fips_code(df['state'], df['county'])
         new_df = df.drop(columns=['state', 'county'])
@@ -26,8 +33,7 @@ class DataProcessor:
         return new_df
     
     def clean_storm(self):
-        csv = self.data_dict["storm_data"]
-        df = pd.read_csv(csv)
+        df = self.data_dict["storm_data"]
 
         # NOTE: adjust for inflation if we want to compare damage across years, but for now we will just use the raw damage values
 
@@ -125,9 +131,8 @@ class DataProcessor:
         return new_df
     
     def clean_population(self):
-        csv = self.data_dict["population"]
-        df = pd.read_csv(csv)
-        
+        df = self.data_dict["population"]
+
         # combine state and county fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
         df['FIPS'] = self.make_fips_code(df['state'], df['county'])
         # drop STATE_FIPS and COUNTY_FIPS columns
@@ -142,13 +147,16 @@ class DataProcessor:
         return new_df
     
     def clean_income(self):
-        csv = self.data_dict["median_income"]
-        df = pd.read_csv(csv)
+        df = self.data_dict["median_income"]
 
         # combine state and county fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
         df['FIPS'] = self.make_fips_code(df['state'], df['county'])
+
         # drop STATE_FIPS and COUNTY_FIPS columns
         new_df = df.drop(columns=['state', 'county'])
+
+        # convert median income column to numeric and coerce errors to NaN
+        new_df['MedianIncome'] = pd.to_numeric(new_df['MedianIncome'], errors='coerce')
 
         # drop negative income values
         new_df = new_df[new_df['MedianIncome'] >= 0]
@@ -162,9 +170,7 @@ class DataProcessor:
         return new_df
     
     def clean_roni(self):
-        # read in the csv file
-        csv = self.data_dict["roni_data"]
-        df = pd.read_csv(csv)
+        df = self.data_dict["roni"]
 
         # set the first column to Month
         df = df.rename(columns={df.columns[0]: 'MONTH_NAME'})
@@ -174,8 +180,8 @@ class DataProcessor:
         return df
     
     def clean_anomaly(self):
-        csv = self.data_dict["temp_anomaly"]
-        df = pd.read_csv(csv)
+        # read in the csv file
+        df = self.data_dict["temp_anomaly"]
 
         # split partial fips data into two columns on "-"
         df[['STATE_ABBR', 'COUNTY_FIPS']] = df[df.columns[0]].str.split('-', expand=True)
@@ -202,14 +208,13 @@ class DataProcessor:
         # change the column starting with Anomaly to just ANOMALY
         df = df.rename(columns= {[col for col in df.columns if col.startswith('Anomaly')][0]: 'ANOMALY_F'})
 
-        # add farenheight to end of temperature column name
+        # add fahrenheit to end of temperature column name
         df = df.rename(columns={"TEMPERATURE": 'TEMPERATURE_F'})
 
         return df
     
     def clean_coastalTypes(self):
-        csv = self.data_dict["coastal_type"]
-        df = pd.read_csv(csv)
+        df = self.data_dict["coastal_type"]
 
         # fill missing values in COASTAL_TYPE_SHORELINE with inland
         df["COASTAL_TYPE_SHORELINE"] = df["COASTAL_TYPE_SHORELINE"].fillna("inland")
@@ -220,7 +225,7 @@ class DataProcessor:
         return df
     
     def process_all(self):
-        """Process all data cleaning methods."""
+        """run all data cleaning methods."""
         population_df = self.clean_population()
         median_income_df = self.clean_income()
         house_age_df = self.clean_housing()
@@ -229,7 +234,7 @@ class DataProcessor:
         temp_anomaly_df = self.clean_anomaly()
         coastal_type_df = self.clean_coastalTypes()
 
-        return {
+        cleaned_data = {
                 "population": population_df,
                 "median_income": median_income_df,
                 "housing": house_age_df,
@@ -238,3 +243,9 @@ class DataProcessor:
                 "temp_anomaly": temp_anomaly_df,
                 "coastal_type": coastal_type_df
         }
+
+        if self.download:
+            for key, df in cleaned_data.items():
+                df.to_csv(self.data_path + f"cleaned_{key}.csv", index=False)
+
+        return cleaned_data
