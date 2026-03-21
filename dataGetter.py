@@ -325,7 +325,7 @@ class DataGetter:
         
         if self.download:
             for name, df in dataframes.items():
-                output_file = f"{self.directory}/{name}_{self.year}.csv"
+                output_file = f"{self.directory}/{name}.csv"
                 df.to_csv(output_file, index=False)
                 self.check_file_existence(output_file)
         return dataframes

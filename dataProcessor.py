@@ -4,12 +4,14 @@ import us
 import os
 
 class DataProcessor:
-    def __init__(self, data_dict, data_path = r"./cleanedData/", download=True):
+    def __init__(self, year, data_dict, data_path = r"./cleanedData/", download=True):
+        self.year = year
         self.data_dict = data_dict
         self.data_path = data_path
         self.download = download
 
         if self.download:
+            self.data_path = data_path + f"{year}/"
             # create the directory if it doesn't exist
             if not os.path.exists(self.data_path):
                 os.makedirs(self.data_path)
