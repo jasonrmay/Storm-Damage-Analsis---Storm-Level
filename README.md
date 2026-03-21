@@ -6,15 +6,16 @@ A Python-based data pipeline for analyzing storm damage at the storm level, comb
 
 This project processes and merges multiple datasets to create a comprehensive analysis dataset linking storm events with socioeconomic and environmental factors. The pipeline:
 
-1. **Fetches raw data** from various sources (NOAA, US Census Bureau, RONI, coastal databases)
+1. **Fetches raw data** from various sources (NOAA, NWS, NCEI, and US Census Bureau)
 2. **Cleans and processes** each dataset independently
-3. **Merges** all datasets on geographic identifiers (FIPS codes) and temporal dimensions
+3. **Merges** all datasets on geographic identifiers (FIPS codes) and the appropriate temporal dimension
 4. **Produces** a unified dataset ready for analysis
 
 ## Key Features
 
 - Data fetching from Census API
-- Data cleaning and standardization across multiple sources
+- Calculation of Variables using NumPy
+- Data cleaning and standardization across multiple sources using Pandas
 - Intelligent merging with FIPS codes, month name, and month numbers matching
 - Organized output structure with year-based directories
 
@@ -38,7 +39,7 @@ Install dependencies with:
 pip install pandas numpy requests us
 ```
 
-## Getting a Census Public API Key and Setting an Environment Variable
+## Getting a Census API Key and Setting an Environment Variable
 
 1. **Obtain a Census API Key**: Visit [https://api.census.gov/data/key_signup.html](https://api.census.gov/data/key_signup.html) to request your free API key.
 
