@@ -4,7 +4,7 @@ import us
 import os
 
 class DataProcessor:
-    def __init__(self, year, data_dict, data_path = r"./cleanedData/", download=True):
+    def __init__(self, year, data_dict, data_path = r"./cleanedData/", download=False):
         self.year = year
         self.data_dict = data_dict
         self.data_path = data_path
@@ -17,8 +17,8 @@ class DataProcessor:
                 os.makedirs(self.data_path)
 
     def make_fips_code(self, state_code_col, county_code_col):
-        # combine state and county fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
-        return str(state_code_col.to_list()[0]).zfill(2) + str(county_code_col.to_list()[0]).zfill(3)
+        # for each row, combine state and county fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
+        return state_code_col.astype(str).str.zfill(2) + county_code_col.astype(str).str.zfill(3)
 
     def clean_housing(self):
         df = self.data_dict["house_age"]
@@ -37,9 +37,7 @@ class DataProcessor:
     def clean_storm(self):
         df = self.data_dict["storm_data"]
 
-        # NOTE: adjust for inflation if we want to compare damage across years, but for now we will just use the raw damage values
-
-        # keep columns: first 6 columns, state, state_fips, month_name, event_type,cz_fips cz_name, damage_property, begin_lat, begin_lon, end_lat, end_lon. All names are in uppper case
+        # keep columns: first 6 columns, state, state_fips, month_name, event_type,cz_fips cz_name, damage_property, begin_lat, begin_lon, end_lat, end_lon. All names are in upper case
         new_df = df.iloc[:, :6]
         join_df = df[['STATE', 'STATE_FIPS', 'MONTH_NAME', 'EVENT_TYPE', 'CZ_FIPS', 'CZ_NAME', 'DAMAGE_PROPERTY', 'BEGIN_LAT', 'BEGIN_LON', 'END_LAT', 'END_LON', 'BEGIN_DAY']]
         new_df = pd.concat([new_df, join_df], axis=1)
@@ -116,10 +114,9 @@ class DataProcessor:
 
 
         # combine state cz fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
-        df['FIPS'] = self.make_fips_code(df['STATE_FIPS'], df['CZ_FIPS'])
+        new_df['FIPS'] = self.make_fips_code(df['STATE_FIPS'], df['CZ_FIPS'])
         # drop STATE_FIPS and CZ_FIPS columns
         new_df = new_df.drop(columns=['STATE_FIPS', 'CZ_FIPS'])
-
 
 
 
@@ -188,8 +185,8 @@ class DataProcessor:
         # split partial fips data into two columns on "-"
         df[['STATE_ABBR', 'COUNTY_FIPS']] = df[df.columns[0]].str.split('-', expand=True)
 
-        # drop partial fips column
-        df = df.drop(columns=df.columns[0])
+        # drop partial fips and state abbreviation column
+        df = df.drop(columns=[ 'PartialFIPS'])
 
         # convert state abreviation to state number using a mapping dictionary
         def abbreviation_to_fips(abbreviation):
@@ -202,6 +199,9 @@ class DataProcessor:
                 return "Invalid abbreviation"
             
         df['STATE_FIPS'] = df['STATE_ABBR'].apply(abbreviation_to_fips)
+
+        # drop state abbreviation column
+        df = df.drop(columns=['STATE_ABBR'])
 
         # combine state and county fips and pad with zeros on left to ensure they are 5 digits long. Add a new column called 'FIPS' to the dataframe
         df['FIPS'] = self.make_fips_code(df['STATE_FIPS'], df['COUNTY_FIPS'])
@@ -218,6 +218,9 @@ class DataProcessor:
     def clean_coastalTypes(self):
         df = self.data_dict["coastal_type"]
 
+        # pad fips with zeros on left to ensure they are 5 digits long.
+        df['FIPS'] = df['FIPS'].apply(lambda x: str(x).zfill(5))
+
         # fill missing values in COASTAL_TYPE_SHORELINE with inland
         df["COASTAL_TYPE_SHORELINE"] = df["COASTAL_TYPE_SHORELINE"].fillna("inland")
 
@@ -232,7 +235,7 @@ class DataProcessor:
         median_income_df = self.clean_income()
         house_age_df = self.clean_housing()
         roni_df = self.clean_roni()
-        storm_damage_df = self.clean_storm()
+        storm_data_df = self.clean_storm()
         temp_anomaly_df = self.clean_anomaly()
         coastal_type_df = self.clean_coastalTypes()
 
@@ -241,7 +244,7 @@ class DataProcessor:
                 "median_income": median_income_df,
                 "housing": house_age_df,
                 "roni": roni_df,
-                "storm_damage": storm_damage_df,
+                "storm_data": storm_data_df,
                 "temp_anomaly": temp_anomaly_df,
                 "coastal_type": coastal_type_df
         }
