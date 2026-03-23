@@ -56,6 +56,11 @@ pip install pandas numpy requests us
      ```bash
      export CENSUS_KEY="your_api_key_here"
      ```
+  
+   - **bash**
+      ```
+      conda env config vars set API_KEY_NAME=your_api_key_value
+      ```
 
 3. **Verify the configuration**: In Python, verify with:
    ```python
