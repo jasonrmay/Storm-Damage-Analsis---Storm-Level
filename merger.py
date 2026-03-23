@@ -45,9 +45,6 @@ class Merge():
         # make population a numeric column
         merged_df['POPULATION'] = pd.to_numeric(merged_df['POPULATION'], errors='coerce')
 
-        # drop fips
-        merged_df = merged_df.drop(columns=['FIPS'])
-
 
 
         if self.download:
