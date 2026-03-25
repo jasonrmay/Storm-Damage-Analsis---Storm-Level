@@ -39,14 +39,9 @@ class Merge():
 
 
         # ----- final cleaning steps -----
-        # drop month column as it is redundant now that we have the month name column.
-        merged_df = merged_df.drop(columns=['MONTH'])
 
         # make population a numeric column
         merged_df['POPULATION'] = pd.to_numeric(merged_df['POPULATION'], errors='coerce')
-
-        # drop fips
-        merged_df = merged_df.drop(columns=['FIPS'])
 
 
 
