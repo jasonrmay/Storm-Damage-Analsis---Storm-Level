@@ -59,7 +59,7 @@ class DataProcessor:
         new_df['STORM_AREA_SQMILES'] = new_df.apply(lambda row: rectagular_area(row['BEGIN_LAT'], row['BEGIN_LON'], row['END_LAT'], row['END_LON']), axis=1)
 
         # drop the begin and end lat and lon columns
-        new_df = new_df.drop(columns=['BEGIN_LAT', 'BEGIN_LON', 'END_LAT', 'END_LON'])
+        new_df = new_df.drop(columns=[ 'END_LAT', 'END_LON'])
 
 
         # calculate the total damage by converting the damage property column to a numeric value. 
