@@ -1,0 +1,334 @@
+---
+title: "Claasifier for Storm Event Type"
+output: html_document
+---
+
+# Jason Ryan May
+
+**Research Question:**
+
+* Given where a storm occurs, when it occurs, what the local climate and demographics look like, and the storm's physical characteristics; Can we predict what type of severe weather event it is?
+
+
+# Data Cleaning and Preprocessing
+
+```{r, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+```
+
+```{r}
+# ── 1. Load Raw Data ────────────────────────────────────────────────────────
+raw_df <- read_csv("mergedData_2023.csv", show_col_types = FALSE)
+raw_df |> count(EVENT_TYPE, sort = TRUE) |> print()
+```
+
+* It should be noted there is an imbalance of observations in each class. Additionally, there are only 257 lighting events, which is a very small number of observations to train a model on.
+
+```{r}
+# ── 2. Merge Lightning into Thunderstorm Wind ──────────────────────────────
+#
+# Lightning has too few observations (~256) and is nearly indistinguishable
+# from Thunderstorm Wind using these features. Merging improves model
+# performance on all other classes without meaningful information loss.
+ 
+# new_df <- raw_df |>
+#   mutate(EVENT_TYPE = if_else(EVENT_TYPE == "Lightning",
+#                               "Thunderstorm Wind",
+#                               EVENT_TYPE))
+#  
+# cat("\nClass distribution after merging Lightning into Thunderstorm Wind:\n")
+# new_df |> count(EVENT_TYPE, sort = TRUE) |> print()
+```
+
+
+```{r}
+# ── 3. Binary Indicators for Zero-Inflated Columns ─────────────────────────
+#
+# DAMAGE_PROPERTY (71.5% zeros), STORM_AREA_SQMILES (79.9% zeros), and
+# DURATION_MINUTES (57.8% zeros) are heavily zero-inflated. Adding binary
+# flags lets the model split on "zero vs nonzero" independently from
+# the magnitude.
+ 
+new_df <- raw_df |>
+  mutate(
+    DAMAGE_PROPERTY_NONZERO    = as.integer(DAMAGE_PROPERTY > 0),
+    STORM_AREA_SQMILES_NONZERO = as.integer(STORM_AREA_SQMILES > 0),
+    DURATION_MINUTES_NONZERO   = as.integer(DURATION_MINUTES > 0)
+  )
+
+# drop the original columns since the magnitude is not meaningful when zero-inflated
+new_df <- new_df |>
+  select(-DAMAGE_PROPERTY, -STORM_AREA_SQMILES, -DURATION_MINUTES)
+
+# drop state, month_name, FIPS and cz_name since they are redundant with the lat and lon and month number
+new_df <- new_df |>
+  select(-STATE, -MONTH_NAME, -CZ_NAME, -FIPS)
+
+
+# hot swap all categorical variables to numeric factors
+new_df <- new_df |>
+  mutate(
+    EVENT_TYPE = factor(EVENT_TYPE),
+    COASTAL_TYPE_SHORELINE = as.numeric(as.factor(COASTAL_TYPE_SHORELINE)),
+    COASTAL_TYPE_WATERSHED = as.numeric(as.factor(COASTAL_TYPE_WATERSHED)),
+    MODAL_YEAR_BUILT_BIN   = as.numeric(as.factor(MODAL_YEAR_BUILT_BIN))
+    )
+
+glimpse(new_df)
+```
+
+```{r}
+# ── 5. Stratified Train / Test Split ───────────────────────────────────────
+
+set.seed(42)
+data_split <- initial_split(new_df, prop = 0.8, strata = EVENT_TYPE)
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+ 
+cat("\nTrain size:", nrow(train_data), "| Test size:", nrow(test_data), "\n")
+ 
+cat("\nTrain class distribution:\n")
+train_data |> count(EVENT_TYPE, sort = TRUE) |> print()
+```
+
+# Model training -- Random Forest Training & Tuning
+
+```{r, include= = FALSE}
+library(ranger)
+```
+
+```{r}
+# ── 1. Preprocessing Recipe ────────────────────────────────────────────────
+#
+# All features are already numeric from the data prep step. The recipe
+# only needs to remove any zero-variance predictors that might arise.
+
+# set the recipe
+rf_recipe <- recipe(EVENT_TYPE ~ ., data = train_data) |>
+  step_zv(all_predictors())
+```
+
+```{r}
+# ── 2. Model Specification ─────────────────────────────────────────────────
+#
+# Random Forest via ranger with two tunable hyperparameters:
+#   - mtry:  number of features randomly sampled at each split
+#   - min_n: minimum observations required in a terminal node
+# trees is fixed at 300 (sufficient for convergence without excessive runtime).
+
+# importance = "impurity" enables Gini-based feature importance extraction.
+
+# use ranger for random forest implementation
+rf_spec <- rand_forest(
+  trees = 300,
+  mtry  = tune(),
+  min_n = tune()
+) |>
+  set_engine("ranger", importance = "impurity") |>
+  set_mode("classification")
+ 
+```
+
+```{r}
+# ── 4. Workflow ─────────────────────────────────────────────────────────────
+
+# A workflow bundles the recipe and model specification together, ensuring that
+# all preprocessing steps are correctly applied during tuning and final fitting.
+rf_workflow <- workflow() |>
+  add_recipe(rf_recipe) |>
+  add_model(rf_spec)
+
+```
+
+```{r}
+# ── 5. Cross-Validation Folds ──────────────────────────────────────────────
+
+set.seed(42)
+
+# Stratified 5-fold cross-validation ensures each fold has a representative distribution of the EVENT_TYPE classes, which is crucial given the class imbalance.
+cv_folds <- vfold_cv(train_data, v = 5, strata = EVENT_TYPE)
+
+```
+
+```{r, cache = TRUE}
+# ── 6. Hyperparameter Tuning ───────────────────────────────────────────────
+#
+# Grid search over mtry (4–10) and min_n (2–15) with 4 levels each,
+# producing 16 configurations evaluated across 5 folds (80 fits total).
+ 
+
+# A small grid is chosen to balance thoroughness with computational efficiency, especially given the size of the training set and the number of trees.
+rf_grid <- grid_regular(
+  mtry(range = c(4, 10)),
+  min_n(range = c(2, 15)),
+  levels = 4
+)
+ 
+cat("\nTuning", nrow(rf_grid), "configurations x 5 folds...\n")
+
+# tune the model using the workflow, cross-validation folds, and tuning grid. Balanced accuracy is the primary metric for evaluation due to the class imbalance.
+tune_results <- tune_grid(
+  rf_workflow,
+  resamples = cv_folds,
+  grid      = rf_grid,
+  metrics   = metric_set(bal_accuracy),
+  control   = control_grid(verbose = FALSE)
+)
+ 
+cat("\nTop 5 configurations by balance accuracy:\n")
+tune_results |>
+  show_best(metric = "bal_accuracy", n = 5) |>
+  print()
+```
+
+
+```{r}
+# ── 7. Finalize & Fit Best Model ──────────────────────────────────────────
+ 
+best_params <- select_best(tune_results, metric = "bal_accuracy")
+cat("\nBest hyperparameters:\n")
+print(best_params)
+ 
+final_workflow <- rf_workflow |>
+  finalize_workflow(best_params)
+ 
+cat("\nFitting final model on full training set...\n")
+final_model <- final_workflow |>
+  fit(data = train_data)
+ 
+cat("Done. Model fitted with", best_params$mtry, "mtry and",
+    best_params$min_n, "min_n\n")
+```
+
+
+# Evaluation
+```{r, include = FALSE}
+library(vip)
+```
+
+```{r}
+# ── 1. Predictions ─────────────────────────────────────────────────────────
+test_preds <- test_data |>
+  bind_cols(predict(final_model, test_data))
+```
+
+
+```{r}
+# ── 2. Overall Accuracy ────────────────────────────────────────────────────
+#
+# Regular accuracy is dominated by the majority class (Thunderstorm Wind).
+# Balanced accuracy averages recall across all classes equally, giving a
+# fairer picture of performance on minority classes like Heavy Rain and
+# Tornado.
+ 
+test_accuracy <- mean(test_preds$.pred_class == test_preds$EVENT_TYPE)
+ 
+bal_acc <- test_preds |>
+  bal_accuracy(truth = EVENT_TYPE, estimate = .pred_class) |>
+  pull(.estimate)
+
+cat("Overall Accuracy:  ", round(test_accuracy, 3), "\n")
+cat("Balanced Accuracy: ", round(bal_acc, 3), "\n")
+```
+
+```{r}
+conf_mat_result <- test_preds |>
+  conf_mat(truth = EVENT_TYPE, estimate = .pred_class)
+print(conf_mat_result)
+```
+
+
+```{r}
+# ── 3. Per-Class Precision, Recall, F1 ─────────────────────────────────────
+ 
+# Recall: of all actual X, how many did we correctly predict as X?
+recall_tbl <- test_preds |>
+  group_by(EVENT_TYPE) |>
+  summarise(
+    n       = n(),
+    correct = sum(EVENT_TYPE == .pred_class),
+    recall  = correct / n,
+    .groups = "drop"
+  )
+ 
+# Precision: of all predicted X, how many were actually X?
+precision_tbl <- test_preds |>
+  group_by(.pred_class) |>
+  summarise(
+    predicted_n = n(),
+    true_pos    = sum(EVENT_TYPE == .pred_class),
+    precision   = true_pos / predicted_n,
+    .groups     = "drop"
+  ) |>
+  rename(EVENT_TYPE = .pred_class)
+ 
+# Combine into a single report
+class_report <- recall_tbl |>
+  left_join(precision_tbl |> select(EVENT_TYPE, precision), by = "EVENT_TYPE") |>
+  mutate(f1 = 2 * (precision * recall) / (precision + recall)) |>
+  select(EVENT_TYPE, n, precision, recall, f1) |>
+  arrange(desc(f1))
+ 
+cat("\nPer-Class Metrics:\n")
+print(class_report)
+ 
+macro_f1    <- mean(class_report$f1, na.rm = TRUE)
+weighted_f1 <- weighted.mean(class_report$f1, class_report$n, na.rm = TRUE)
+ 
+cat("\nMacro-average F1:   ", round(macro_f1, 3), "\n")
+cat("Weighted-average F1:", round(weighted_f1, 3), "\n")
+```
+
+```{r}
+# ── 4. Feature Importance ──────────────────────────────────────────────────
+ 
+final_fitted <- final_model |> extract_fit_parsnip()
+ 
+importance_tbl <- final_fitted |>
+  vip::vi() |>
+  arrange(desc(Importance))
+ 
+cat("Feature Importances (Gini impurity):\n")
+print(importance_tbl, n = 20)
+```
+
+```{r}
+# ── 5. Feature Importance Plot ─────────────────────────────────────────────
+ 
+importance_tbl |>
+  mutate(Variable = fct_reorder(Variable, Importance)) |>
+  ggplot(aes(x = Importance, y = Variable)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title    = "Random Forest — Feature Importance",
+    subtitle = "Storm Event Type Classification (Gini Impurity)",
+    x        = "Importance",
+    y        = NULL
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+```{r}
+# ── 6. Confusion Matrix Heatmap ───────────────────────────────────────────
+ 
+cm_tbl <- conf_mat_result$table |>
+  as_tibble() |>
+  rename(Predicted = Prediction, Actual = Truth, Count = n)
+ 
+cm_tbl |>
+  ggplot(aes(x = Predicted, y = Actual, fill = Count)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = Count), size = 3.5) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(
+    title = "Confusion Matrix — Random Forest",
+    x     = "Predicted Class",
+    y     = "Actual Class"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1))
+
+```
+
