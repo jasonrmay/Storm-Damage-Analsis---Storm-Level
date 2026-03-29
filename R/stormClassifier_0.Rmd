@@ -339,3 +339,269 @@ cm_tbl |>
 
 ```
 
+# Extra Graphics
+
+```{r, include = FALSE}
+library(rpart)
+library(rpart.plot)
+library(patchwork)
+library(maps)
+```
+
+```{r}
+tree_fit <- rpart(
+  EVENT_TYPE ~ .,
+  data    = train_data,
+  method  = "class",
+  control = rpart.control(
+    maxdepth = 4,
+    cp       = 0.005,
+    minsplit = 100
+  )
+)
+
+rpart.plot(
+  tree_fit,
+  type          = 3,
+  extra         = 102,
+  under         = TRUE,
+  fallen.leaves = TRUE,
+  roundint      = FALSE,
+  cex           = 0.7,
+  box.palette   = "BuGn",
+  main          = "Surrogate Decision Tree — Storm Event Type Classification",
+  sub           = "Simplified single tree showing the splitting logic used by the Random Forest",
+  legend.x = NA
+)
+```
+
+```{r, cache=TRUE}
+# Manually computed PDPs for the top 4 features, showing how each shifts the predicted class probabilities.
+ 
+prepped_recipe <- prep(rf_recipe, training = train_data)
+train_baked <- bake(prepped_recipe, new_data = train_data) |> select(-EVENT_TYPE)
+ 
+fitted_ranger <- extract_fit_parsnip(final_model)$fit
+ 
+top_features <- c("STORM_AREA_SQMILES_NONZERO", "BEGIN_LON", "TEMPERATURE_F", "BEGIN_LAT")
+ 
+# Get class names — try multiple sources in order of reliability
+class_levels <- fitted_ranger$forest$levels
+if (is.null(class_levels) || length(class_levels) == 0) {
+  class_levels <- levels(train_data$EVENT_TYPE)
+}
+if (is.null(class_levels) || length(class_levels) == 0) {
+  class_levels <- sort(unique(as.character(train_data$EVENT_TYPE)))
+}
+ 
+compute_pdp <- function(model, data, feature, grid_size = 40) {
+  feat_vals <- data[[feature]]
+  n_na <- sum(is.na(feat_vals))
+  if (n_na > 0) cat("    Note:", n_na, "NAs in", feature, "(ignored)\n")
+ 
+  grid_vals <- seq(
+    quantile(feat_vals, 0.02, na.rm = TRUE),
+    quantile(feat_vals, 0.98, na.rm = TRUE),
+    length.out = grid_size
+  )
+ 
+  pdp_results <- map_dfr(grid_vals, function(val) {
+    modified <- data
+    modified[[feature]] <- val
+    preds <- predict(model, data = as.data.frame(modified), type = "response")
+    avg_probs <- colMeans(preds$predictions, na.rm = TRUE)
+    # Use prediction column names if class_levels failed
+    pred_names <- if (length(class_levels) > 0) class_levels else colnames(preds$predictions)
+    tibble(value = val) |>
+      bind_cols(as_tibble_row(setNames(as.list(avg_probs), pred_names)))
+  })
+ 
+  pdp_results |>
+    pivot_longer(-value, names_to = "EVENT_TYPE", values_to = "Probability") |>
+    mutate(feature = feature)
+}
+ 
+pdp_data <- map_dfr(top_features, function(feat) {
+  cat("  Computing PDP for", feat, "...\n")
+  compute_pdp(fitted_ranger, train_baked, feat)
+})
+ 
+pdp_data |>
+  ggplot(aes(x = value, y = Probability, color = EVENT_TYPE)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ feature, scales = "free_x", ncol = 2) +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title    = "Partial Dependence Plots — Top 4 Features",
+    subtitle = "How each feature shifts predicted probability by event type",
+    x        = "Feature Value",
+    y        = "Predicted Probability",
+    color    = "Event Type"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold")
+  )
+```
+
+```{r}
+
+# Plots each storm event as a point on a CONUS map, colored by event type.
+# Reveals spatial clustering that lat/lon captures for the model.
+ 
+us_map <- map_data("state")
+ 
+# Combine train and test for a complete picture
+all_data <- bind_rows(train_data, test_data)
+ 
+# Sample down for readability
+set.seed(777)
+plot_sample <- all_data |>
+  group_by(EVENT_TYPE) |>
+  slice_sample(n = 1500) |>
+  ungroup()
+ 
+ggplot() +
+  geom_polygon(
+    data = us_map,
+    aes(x = long, y = lat, group = group),
+    fill = "grey95", color = "grey70", linewidth = 0.3
+  ) +
+  geom_point(
+    data = plot_sample,
+    aes(x = BEGIN_LON, y = BEGIN_LAT, color = EVENT_TYPE),
+    alpha = 0.4, size = 0.6
+  ) +
+  facet_wrap(~ EVENT_TYPE, ncol = 3) +
+  scale_color_brewer(palette = "Set2") +
+  coord_quickmap(xlim = c(-125, -66), ylim = c(24, 50)) +
+  labs(
+    title    = "Distribution of Storm Events (2023)",
+    subtitle = "Each point is a storm event, faceted by type",
+    x        = "Longitude",
+    y        = "Latitude"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "none",
+    strip.text       = element_text(face = "bold", size = 10),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+# Creates a grid of lat/lon points across CONUS, predicts class
+# probabilities at each point (holding other features at their medians),
+# and plots the most-likely class and its confidence as a filled map.
+ 
+# Build a grid of geographic points
+lat_grid <- seq(25, 49, length.out = 60)
+lon_grid <- seq(-124, -67, length.out = 80)
+geo_grid <- crossing(BEGIN_LAT = lat_grid, BEGIN_LON = lon_grid)
+ 
+# Fill all other features with their training set medians
+median_values <- train_baked |>
+  select(-BEGIN_LAT, -BEGIN_LON) |>
+  summarise(across(everything(), median))
+ 
+grid_data <- geo_grid |>
+  bind_cols(median_values |> slice(rep(1, nrow(geo_grid))))
+ 
+# Predict class probabilities at each grid point
+grid_preds <- predict(
+  fitted_ranger,
+  data = as.data.frame(grid_data),
+  type = "response"
+)
+ 
+# Extract the most likely class and its probability
+pred_probs <- as_tibble(grid_preds$predictions)
+colnames(pred_probs) <- class_levels
+ 
+grid_results <- geo_grid |>
+  bind_cols(pred_probs) |>
+  mutate(
+    predicted_class = class_levels[max.col(pred_probs)],
+    confidence      = apply(pred_probs, 1, max)
+  )
+ 
+# Plot: tile colored by predicted class, alpha by confidence
+grid_results |>
+  ggplot() +
+  geom_polygon(
+    data = us_map,
+    aes(x = long, y = lat, group = group),
+    fill = NA, color = "grey40", linewidth = 0.3
+  ) +
+  geom_tile(
+    aes(x = BEGIN_LON, y = BEGIN_LAT,
+        fill = predicted_class, alpha = confidence),
+    width = 0.8, height = 0.45
+  ) +
+  geom_polygon(
+    data = us_map,
+    aes(x = long, y = lat, group = group),
+    fill = NA, color = "grey40", linewidth = 0.3
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_alpha_continuous(range = c(0.3, 1.0), guide = "none") +
+  coord_quickmap(xlim = c(-125, -66), ylim = c(24, 50)) +
+  labs(
+    title    = "Predicted Storm Type Across CONUS",
+    subtitle = "Based on lat/lon only (all other features held at median). Opacity = model confidence.",
+    fill     = "Predicted\nEvent Type",
+    x        = "Longitude",
+    y        = "Latitude"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ 
+# Generate predictions on the test set
+test_with_preds <- test_data |>
+  bind_cols(predict(final_model, test_data)) |>
+  mutate(correct = EVENT_TYPE == .pred_class)
+
+# sample down for readability
+set.seed(777)
+test_with_preds <- test_with_preds |>
+  group_by(EVENT_TYPE) |>
+  slice_sample(n = 1500) |>
+  ungroup()
+
+ 
+# Faceted map: predicted class
+ggplot() +
+  geom_polygon(
+    data = us_map,
+    aes(x = long, y = lat, group = group),
+    fill = "grey95", color = "grey70", linewidth = 0.3
+  ) +
+  geom_point(
+    data = test_with_preds,
+    aes(x = BEGIN_LON, y = BEGIN_LAT, color = .pred_class),
+    alpha = 0.4, size = 0.6
+  ) +
+  facet_wrap(~ .pred_class, ncol = 3) +
+  scale_color_brewer(palette = "Set2") +
+  coord_quickmap(xlim = c(-125, -66), ylim = c(24, 50)) +
+  labs(
+    title    = "Predicted Storm Types — Test Set",
+    subtitle = "Each point is a test event, colored and faceted by model prediction",
+    x        = "Longitude",
+    y        = "Latitude"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "none",
+    strip.text       = element_text(face = "bold", size = 10),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
