@@ -14,8 +14,8 @@ class DataGetter:
     
     """
     def __init__(self, raw_out_dir = "./rawData", CENSUS_KEY = None, year = 2023, download = False,
-                  roni_raw_data_path = ".\static_data\Coastal_data_2010\coastal_counties_2010.csv",
-                  coastal_type_raw_data_path = ".\static_data\Coastal_data_2010\coastal_type_data_2010.csv"):
+                  roni_raw_data_path = r".\static_data\Coastal_data_2010\coastal_counties_2010.csv",
+                  coastal_type_raw_data_path = r".\static_data\Coastal_data_2010\coastal_type_data_2010.csv"):
         self.directory = raw_out_dir
         self.api_key = CENSUS_KEY
         self.year = year
