@@ -28,15 +28,16 @@ DROP_COLS = ["STATE", "MONTH_NAME", "CZ_NAME", "FIPS", "MONTH", "DAMAGE_PROPERTY
 TARGET_RAW = "DAMAGE_PROPERTY"
 TARGET = "log10_damage"
 
-def filter_target(df: pd.DataFrame) -> pd.DataFrame:
+def filter_target(df: pd.DataFrame, drop_zeros: bool = True) -> pd.DataFrame:
     """Drop rows with zero damage, replace na with median damage for that county and storm type
     and add the log10 target."""
 
     df.groupby(["CZ_NAME", "EVENT_TYPE"])[TARGET_RAW].transform(lambda x: x.fillna(x.median()))
 
-    df = df.loc[df[TARGET_RAW] > 0].copy()
-
-    df[TARGET] = np.log10(df[TARGET_RAW])
+    if drop_zeros:
+        df = df.loc[df[TARGET_RAW] > 0].copy()
+        df[TARGET] = np.log10(df[TARGET_RAW])
+        return df
 
     return df
 
@@ -49,16 +50,20 @@ def add_cyclical_month(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def prep_data(df: pd.DataFrame) -> pd.DataFrame:
+def prep_data(df: pd.DataFrame, drop_zeros: bool = True) -> pd.DataFrame:
     
     out = df.copy()
 
-    out = filter_target(out)
+    out = filter_target(out, drop_zeros)
 
     out = add_cyclical_month(out)
 
-    keep = NUMERIC_COLS + CATEGORICAL_COLS + CYCLICAL_COLS + [TARGET]
-    out = out[keep]
+    if drop_zeros:
+        keep = NUMERIC_COLS + CATEGORICAL_COLS + CYCLICAL_COLS + [TARGET]
+        out = out[keep]
+    else:
+        keep = NUMERIC_COLS + CATEGORICAL_COLS + CYCLICAL_COLS + [TARGET_RAW]
+        out = out[keep]
 
     # Coerce categoricals to string so get_dummies behaves predictably.
     for c in CATEGORICAL_COLS:

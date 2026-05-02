@@ -3,7 +3,6 @@ from scipy.stats import loguniform, randint, uniform
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import RandomizedSearchCV
 from xgboost import XGBRegressor
-from sklearn.model_selection import train_test_split
 
 def tune_model(X_train, X_test, y_train, y_test, seed=8, n_iter=30, test_size=0.2):
 
@@ -20,7 +19,7 @@ def tune_model(X_train, X_test, y_train, y_test, seed=8, n_iter=30, test_size=0.
     }
 
     search = RandomizedSearchCV(
-        XGBRegressor(objective="reg:squarederror", tree_method="hist", random_state=seed, device="cuda"),
+        XGBRegressor(objective="reg:squarederror", tree_method="hist", random_state=seed),
         param_distributions=param_dist,
         n_iter=n_iter,
         cv=5,
