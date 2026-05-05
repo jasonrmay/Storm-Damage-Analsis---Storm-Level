@@ -38,8 +38,7 @@ def tune_log_model(X_train, X_test, y_train, y_test, seed=8, n_iter=30):
     print(f"best params:  {search.best_params_}")
     
     prob = search.predict_proba(X_test)[:, 1]
-    pred = (prob >= 0.5).astype(int)
-    
+    pred = (prob >= 0.5).astype(int) # note the 0.5 threshold for classification
     print(f"holdout ROC AUC:    {roc_auc_score(y_test, prob):.4f}")
     print(f"holdout PR  AUC:    {average_precision_score(y_test, prob):.4f}")
     print(f"holdout log loss:   {log_loss(y_test, prob):.4f}")
